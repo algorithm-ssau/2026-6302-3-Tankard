@@ -2,6 +2,9 @@ import flet as ft
 import json
 from pathlib import Path
 from parser import TankistStatsParser, ParserError
+from ai_agent import AIStatsAnalyzer
+import asyncio
+import concurrent.futures
 
 STATS_FILE = Path("stats.json")
 
@@ -190,7 +193,6 @@ def create_group_summaries_tab(stats: dict) -> ft.Container:
     """Вкладка с групповыми сводками"""
     groups = stats.get("group_summaries", {})
     
-    # Внутренние вкладки для групповых сводок
     inner_tabs = ft.Tabs(
         length=3,
         selected_index=0,
@@ -328,6 +330,32 @@ def _create_top_table(tanks: list) -> ft.DataTable:
         expand=True,
     )
 
+async def update_ai_analysis_async(page: ft.Page, ai_input: ft.TextField, ai_analyst, stats: dict):
+    """Асинхронно обновляет поле с анализом ИИ (не блокирует UI)"""
+    if not stats:
+        ai_input.value = ""
+        page.update()
+        return
+    
+    if ai_analyst is None:
+        ai_input.value = "⚠️ ИИ-аналитик не доступен. Запусти 'ollama serve' в терминале"
+        page.update()
+        return
+    
+    ai_input.value = "🤔 Анализирую статистику... (20-60 секунд)"
+    page.update()
+    
+    try:
+        # Запускаем синхронный метод analyze в отдельном потоке через run_in_executor
+        loop = asyncio.get_running_loop()
+        with concurrent.futures.ThreadPoolExecutor() as pool:
+            result = await loop.run_in_executor(pool, ai_analyst.analyze, stats)
+        ai_input.value = result
+    except Exception as e:
+        ai_input.value = f"❌ Ошибка анализа: {str(e)}"
+    finally:
+        page.update()
+
 def main(page: ft.Page):
     page.title = "Анализатор игровой статистики World of Tanks"
     page.theme_mode = ft.ThemeMode.DARK
@@ -336,6 +364,14 @@ def main(page: ft.Page):
     page.window_height = 800
     
     interface = StatsInterface()
+    
+    # Создаём ИИ-аналитика
+    try:
+        ai_analyst = AIStatsAnalyzer(model_name="qwen2.5:7b-instruct")
+        print("✅ ИИ-аналитик готов")
+    except Exception as e:
+        print(f"⚠️ ИИ-аналитик не готов: {e}")
+        ai_analyst = None
     
     # Элементы интерфейса
     nickname_field = ft.TextField(
@@ -354,7 +390,7 @@ def main(page: ft.Page):
     error_text = ft.Text("", color=ft.Colors.RED_400, size=14, visible=False)
     loading_indicator = ft.ProgressRing(width=30, height=30, visible=False)
     
-    # Создаем Tabs в соответствии с документацией
+    # Создаем Tabs
     main_tabs = ft.Tabs(
         length=5,
         selected_index=0,
@@ -389,11 +425,12 @@ def main(page: ft.Page):
     
     # Поле для ИИ-агента
     ai_input = ft.TextField(
-        label="Ответ от ИИ-агента",
-        hint_text="Вставьте сюда анализ от искусственного интеллекта...",
+        label="🤖 Анализ от ИИ-агента",
+        hint_text="Анализ появится автоматически после загрузки статистики...",
         multiline=True,
-        min_lines=3,
-        max_lines=10,
+        min_lines=5,
+        max_lines=15,
+        read_only=True,
     )
     
     ai_section = ft.Column(
@@ -425,6 +462,10 @@ def main(page: ft.Page):
             status_text.visible = True
             
             page.update()
+            
+            # Запускаем асинхронный ИИ-анализ (не блокирует UI!)
+            asyncio.create_task(update_ai_analysis_async(page, ai_input, ai_analyst, stats))
+            
         except Exception as e:
             print(f"Ошибка обновления UI: {e}")
     
@@ -467,7 +508,6 @@ def main(page: ft.Page):
                     bgcolor=ft.Colors.GREEN_700,
                 )
                 page.snack_bar.open = True
-                ai_input.value = ""
                 
         except Exception as e:
             error_text.value = f"❌ Ошибка: {str(e)}"
