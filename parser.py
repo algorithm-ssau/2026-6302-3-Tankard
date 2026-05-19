@@ -1,19 +1,40 @@
+"""
+Парсер статистики «Мир Танков» через tankist.net (без Lesta API key).
+
+Единственная публичная точка входа для кода и CLI:
+
+    from parser import parse_player_stats
+
+    result = parse_player_stats("MyNickname")
+    print(result.files.main)
+    print(result.profile["wn8"])
+"""
 
 from __future__ import annotations
 
 import argparse
 import json
 from collections import defaultdict
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import requests
 
+__all__ = [
+    "parse_player_stats",
+    "ParsePlayerResult",
+    "PlayerStatsFiles",
+    "ParserError",
+]
 
 SOURCE_BASE_URL = "https://tankist.net"
 DEFAULT_TIMEOUT = 20
+DEFAULT_MIN_BATTLES = 20
+DEFAULT_TOP_N = 20
+DEFAULT_MAIN_OUTPUT = "player_stats.json"
+DEFAULT_OUTPUT_DIR = "parsed_output"
 
 MAIN_FILE_DESCRIPTION = {
     "_description": "Главный файл с нормализованной статистикой игрока, агрегатами и топами.",
@@ -128,10 +149,57 @@ class ClassSummary:
 
 
 class ParserError(RuntimeError):
-    pass
+    """Ошибка загрузки или разбора статистики игрока."""
 
 
-class TankistStatsParser:
+@dataclass(frozen=True)
+class PlayerStatsFiles:
+    """Пути к JSON-файлам после сохранения (см. parse_player_stats)."""
+
+    main: Path
+    output_dir: Path
+    raw_payload: Path
+    profile_full: Path
+    tanks_full: Path
+    tank_stats_normalized: Path
+    summaries: Path
+    top_tanks: Path
+
+    def as_dict(self) -> dict[str, str]:
+        return {name: str(path) for name, path in self.__dict__.items()}
+
+
+@dataclass
+class ParsePlayerResult:
+    """
+    Результат parse_player_stats.
+
+    Данные в памяти: main, raw_payload, profile, tanks_full, tanks, summaries, top_tanks.
+    Файлы на диске (если save_to_disk=True): поле files.
+    """
+
+    nickname: str
+    account_id: int | None
+    min_battles: int
+
+    main: dict[str, Any]
+    raw_payload: dict[str, Any]
+    profile: dict[str, Any]
+    tanks_full: list[dict[str, Any]]
+    tanks: list[dict[str, Any]]
+    summaries: dict[str, Any]
+    top_tanks: dict[str, Any]
+
+    files: PlayerStatsFiles | None = None
+    params: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def wn8(self) -> float | None:
+        value = self.profile.get("wn8")
+        return float(value) if value is not None else None
+
+
+class _TankistStatsParser:
     def __init__(self, timeout: int = DEFAULT_TIMEOUT) -> None:
         self.timeout = timeout
 
@@ -275,7 +343,7 @@ class TankistStatsParser:
         return sorted(rows, key=lambda x: (x["avg_wn8"], x["win_rate"], x["battles"]), reverse=True)
 
     @staticmethod
-    def _build_top_lists(tanks: list[TankPerformance], min_battles: int, top_n: int = 20) -> dict[str, Any]:
+    def _build_top_lists(tanks: list[TankPerformance], min_battles: int, top_n: int) -> dict[str, Any]:
         qualified = [t for t in tanks if t.battles >= min_battles]
         as_rows = [asdict(t) for t in qualified]
         return {
@@ -293,10 +361,16 @@ class TankistStatsParser:
             return None
         return round(num / den, 4)
 
-    def collect_player_stats(self, nickname: str, min_battles_for_class_summary: int) -> dict[str, Any]:
+    def build_result(
+        self,
+        nickname: str,
+        *,
+        min_battles: int,
+        top_n: int,
+    ) -> ParsePlayerResult:
         payload = self.fetch_player_payload(nickname)
         tanks = self.build_tank_performance(payload)
-        class_summary = self.build_class_summary(tanks, min_battles=min_battles_for_class_summary)
+        class_summary = self.build_class_summary(tanks, min_battles=min_battles)
         best_class = class_summary[0].vehicle_type if class_summary else None
 
         profile_stats = payload.get("stats") or {}
@@ -331,25 +405,25 @@ class TankistStatsParser:
             },
         }
 
-        per_type = self._weighted_group_summary(tanks, key_fn=lambda t: t.type, min_battles=min_battles_for_class_summary)
-        per_nation = self._weighted_group_summary(
-            tanks, key_fn=lambda t: t.nation, min_battles=min_battles_for_class_summary
-        )
-        per_tier = self._weighted_group_summary(tanks, key_fn=lambda t: t.tier, min_battles=min_battles_for_class_summary)
-        top_lists = self._build_top_lists(tanks, min_battles=min_battles_for_class_summary)
+        per_type = self._weighted_group_summary(tanks, key_fn=lambda t: t.type, min_battles=min_battles)
+        per_nation = self._weighted_group_summary(tanks, key_fn=lambda t: t.nation, min_battles=min_battles)
+        per_tier = self._weighted_group_summary(tanks, key_fn=lambda t: t.tier, min_battles=min_battles)
+        top_lists = self._build_top_lists(tanks, min_battles=min_battles, top_n=top_n)
+        tanks_normalized = [asdict(item) for item in tanks]
+        tanks_full = list(payload.get("tanks") or [])
 
-        main_player_json = {
+        main = {
             "meta": {
                 "source": "tankist.net (unofficial, no Lesta API key)",
                 "source_endpoint": f"{SOURCE_BASE_URL}/api/stat/<nickname>",
                 "game": "Мир Танков",
                 "collected_at_utc": datetime.now(timezone.utc).isoformat(),
-                "nickname": payload.get("nickname") or nickname,
-                "account_id": payload.get("account_id"),
+                "nickname": profile["nickname"],
+                "account_id": profile["account_id"],
             },
             "profile": profile,
             "class_summary": [asdict(item) for item in class_summary],
-            "tank_stats": [asdict(item) for item in tanks],
+            "tank_stats": tanks_normalized,
             "group_summaries": {
                 "by_type": per_type,
                 "by_nation": per_nation,
@@ -358,78 +432,152 @@ class TankistStatsParser:
             "top_tanks": top_lists,
             "insights": {
                 "best_vehicle_class": best_class,
-                "min_battles_for_class_summary": min_battles_for_class_summary,
+                "min_battles_for_class_summary": min_battles,
             },
         }
 
-        return {
-            "player_stats": main_player_json,
-            "raw_payload": payload,
-            "profile_full": profile,
-            "tanks_full": payload.get("tanks", []),
-            "tank_stats_normalized": [asdict(item) for item in tanks],
-            "summaries": {
-                "by_type": per_type,
-                "by_nation": per_nation,
-                "by_tier": per_tier,
-                "class_summary": [asdict(item) for item in class_summary],
-            },
-            "top_tanks": top_lists,
+        summaries = {
+            "by_type": per_type,
+            "by_nation": per_nation,
+            "by_tier": per_tier,
+            "class_summary": [asdict(item) for item in class_summary],
         }
 
+        return ParsePlayerResult(
+            nickname=str(profile["nickname"]),
+            account_id=profile.get("account_id"),
+            min_battles=min_battles,
+            main=main,
+            raw_payload=payload,
+            profile=profile,
+            tanks_full=tanks_full,
+            tanks=tanks_normalized,
+            summaries=summaries,
+            top_tanks=top_lists,
+            params={"top_n": top_n, "timeout": self.timeout},
+        )
 
-def build_cli() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Парсер статистики Мир Танков без Lesta API ключа")
-    parser.add_argument("--nickname", required=True, help="Ник игрока")
-    parser.add_argument("--output", default="player_stats.json", help="Путь к главному JSON (`player_stats.json`)")
-    parser.add_argument(
-        "--out-dir",
-        default="parsed_output",
-        help="Папка для дополнительных JSON (raw_payload, summaries, tops, profile, tanks)",
+
+def _write_json(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as file:
+        json.dump(payload, file, ensure_ascii=False, indent=2)
+
+
+def _save_result_files(
+    result: ParsePlayerResult,
+    *,
+    output: Path,
+    out_dir: Path,
+) -> PlayerStatsFiles:
+    _write_json(output, {**MAIN_FILE_DESCRIPTION, **result.main})
+
+    extra: dict[str, dict[str, Any]] = {
+        "raw_payload.json": {**RAW_PAYLOAD_DESCRIPTION, "data": result.raw_payload},
+        "profile_full.json": {**PROFILE_DESCRIPTION, "data": result.profile},
+        "tanks_full.json": {**TANKS_FULL_DESCRIPTION, "data": result.tanks_full},
+        "tank_stats_normalized.json": {**TANKS_NORMALIZED_DESCRIPTION, "data": result.tanks},
+        "summaries.json": {**SUMMARIES_DESCRIPTION, "data": result.summaries},
+        "top_tanks.json": {**TOP_TANKS_DESCRIPTION, "data": result.top_tanks},
+    }
+
+    paths: dict[str, Path] = {}
+    for filename, payload in extra.items():
+        path = out_dir / filename
+        _write_json(path, payload)
+        paths[filename] = path.resolve()
+
+    return PlayerStatsFiles(
+        main=output.resolve(),
+        output_dir=out_dir.resolve(),
+        raw_payload=paths["raw_payload.json"],
+        profile_full=paths["profile_full.json"],
+        tanks_full=paths["tanks_full.json"],
+        tank_stats_normalized=paths["tank_stats_normalized.json"],
+        summaries=paths["summaries.json"],
+        top_tanks=paths["top_tanks.json"],
     )
-    parser.add_argument(
+
+
+def parse_player_stats(
+    nickname: str,
+    *,
+    output: str | Path = DEFAULT_MAIN_OUTPUT,
+    out_dir: str | Path = DEFAULT_OUTPUT_DIR,
+    min_battles: int = DEFAULT_MIN_BATTLES,
+    top_n: int = DEFAULT_TOP_N,
+    timeout: int = DEFAULT_TIMEOUT,
+    save_to_disk: bool = True,
+    verbose: bool = False,
+) -> ParsePlayerResult:
+    """
+    Загрузить статистику игрока, нормализовать и (по умолчанию) сохранить все JSON.
+
+    Args:
+        nickname: Ник в «Мире Танков» (минимум 3 символа).
+        output: Путь к главному файлу player_stats.json.
+        out_dir: Папка для остальных JSON (raw_payload, profile, tanks, summaries, top_tanks).
+        min_battles: Минимум боёв на танке для агрегатов и топов.
+        top_n: Сколько танков в каждом топе.
+        timeout: Таймаут HTTP-запроса к tankist.net, секунды.
+        save_to_disk: False — только данные в памяти, без записи файлов.
+        verbose: True — вывести пути к сохранённым файлам в stdout.
+
+    Returns:
+        ParsePlayerResult с полями main, profile, tanks, summaries, top_tanks и paths в files.
+
+    Raises:
+        ParserError: неверный ник, игрок не найден или ошибка источника.
+    """
+    if nickname.strip() == "PLAYER_NICK":
+        raise ParserError("Укажи реальный nickname игрока, а не PLAYER_NICK")
+
+    result = _TankistStatsParser(timeout=timeout).build_result(
+        nickname,
+        min_battles=min_battles,
+        top_n=top_n,
+    )
+
+    if not save_to_disk:
+        return result
+
+    files = _save_result_files(result, output=Path(output), out_dir=Path(out_dir))
+    result.files = files
+
+    if verbose:
+        print(f"Готово: {files.main}")
+        print(f"Дополнительно: {files.output_dir}")
+
+    return result
+
+
+def _build_cli() -> argparse.ArgumentParser:
+    cli = argparse.ArgumentParser(
+        description="Парсер статистики Мир Танков (обёртка над parse_player_stats)",
+    )
+    cli.add_argument("--nickname", required=True, help="Ник игрока")
+    cli.add_argument("--output", default=DEFAULT_MAIN_OUTPUT, help="Путь к player_stats.json")
+    cli.add_argument("--out-dir", default=DEFAULT_OUTPUT_DIR, help="Папка для дополнительных JSON")
+    cli.add_argument(
         "--min-battles",
         type=int,
-        default=20,
-        help="Мин. число боев на танке для учета в агрегатах по классу",
+        default=DEFAULT_MIN_BATTLES,
+        help="Мин. боёв на танке для агрегатов и топов",
     )
-    return parser
+    cli.add_argument("--top-n", type=int, default=DEFAULT_TOP_N, help="Размер каждого топа танков")
+    return cli
 
 
 def main() -> None:
-    args = build_cli().parse_args()
-    if args.nickname == "PLAYER_NICK":
-        raise SystemExit("Укажи реальный --nickname игрока, а не PLAYER_NICK")
-
-    parser = TankistStatsParser()
-    parsed = parser.collect_player_stats(
-        nickname=args.nickname,
-        min_battles_for_class_summary=args.min_battles,
+    args = _build_cli().parse_args()
+    parse_player_stats(
+        args.nickname,
+        output=args.output,
+        out_dir=args.out_dir,
+        min_battles=args.min_battles,
+        top_n=args.top_n,
+        verbose=True,
     )
-
-    output_path = Path(args.output)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_dir = Path(args.out_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    main_payload = {**MAIN_FILE_DESCRIPTION, **parsed["player_stats"]}
-    with output_path.open("w", encoding="utf-8") as f:
-        json.dump(main_payload, f, ensure_ascii=False, indent=2)
-
-    extra_files: dict[str, Any] = {
-        "raw_payload.json": {**RAW_PAYLOAD_DESCRIPTION, "data": parsed["raw_payload"]},
-        "profile_full.json": {**PROFILE_DESCRIPTION, "data": parsed["profile_full"]},
-        "tanks_full.json": {**TANKS_FULL_DESCRIPTION, "data": parsed["tanks_full"]},
-        "tank_stats_normalized.json": {**TANKS_NORMALIZED_DESCRIPTION, "data": parsed["tank_stats_normalized"]},
-        "summaries.json": {**SUMMARIES_DESCRIPTION, "data": parsed["summaries"]},
-        "top_tanks.json": {**TOP_TANKS_DESCRIPTION, "data": parsed["top_tanks"]},
-    }
-    for filename, data in extra_files.items():
-        with (output_dir / filename).open("w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-
-    print(f"Готово: основной файл -> {output_path}")
-    print(f"Дополнительные JSON -> {output_dir}")
 
 
 if __name__ == "__main__":
