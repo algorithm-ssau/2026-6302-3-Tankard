@@ -6,28 +6,11 @@ from ai_agent import AIStatsAnalyzer
 import asyncio
 import concurrent.futures
 
-STATS_FILE = Path("stats.json")
-
 class StatsInterface:
     def __init__(self):
         self.parser = TankistStatsParser()
         self.current_stats = None
-        
-    def load_stats_from_file(self) -> dict | None:
-        """Загружает статистику из файла если он существует"""
-        if STATS_FILE.exists():
-            try:
-                with open(STATS_FILE, "r", encoding="utf-8") as f:
-                    return json.load(f)
-            except Exception as e:
-                print(f"Ошибка загрузки файла: {e}")
-        return None
-    
-    def save_stats_to_file(self, stats: dict):
-        """Сохраняет статистику в файл"""
-        with open(STATS_FILE, "w", encoding="utf-8") as f:
-            json.dump(stats, f, ensure_ascii=False, indent=2)
-    
+
     def fetch_player_stats(self, nickname: str) -> dict | None:
         """Получает статистику игрока через парсер"""
         try:
@@ -568,17 +551,6 @@ def main(page: ft.Page):
         except Exception as e:
             print(f"Ошибка обновления UI: {e}")
     
-    def load_from_file():
-        """Загружает данные из файла при старте"""
-        stats = interface.load_stats_from_file()
-        if stats:
-            interface.current_stats = stats
-            update_ui_with_stats(stats)
-        else:
-            main_tabs.visible = False
-            ai_section.visible = False
-            page.update()
-    
     def on_search_click(e):
         """Обработчик поиска статистики"""
         nickname = nickname_field.value.strip()
@@ -598,7 +570,6 @@ def main(page: ft.Page):
             stats = interface.fetch_player_stats(nickname)
             
             if stats:
-                interface.save_stats_to_file(stats)
                 interface.current_stats = stats
                 update_ui_with_stats(stats)
                 
@@ -660,8 +631,11 @@ def main(page: ft.Page):
             ),
         )
     )
-    
-    load_from_file()
 
 if __name__ == "__main__":
-    ft.app(target=main)
+    ft.app(
+        target=main,
+        host="192.168.0.105", 
+        port=8501, 
+        view=ft.AppView.WEB_BROWSER
+    )
