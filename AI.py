@@ -71,7 +71,7 @@ class AI:
 Формат ответа: сплошной текст, абзацы, без маркированных списков (если только они не для перечисления советов). Общий объём — не более 4-5 абзацев.
 """
 
-        prompt = general_info + class_summary + tanks_section + instruction
+        prompt = tanks_section + instruction
         return self.get_response(prompt)
 
     def get_response(self, prompt: str) -> str:
