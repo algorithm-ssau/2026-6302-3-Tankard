@@ -1,127 +1,263 @@
 import flet as ft
-import json
-from pathlib import Path
 from parser import TankistStatsParser, ParserError
 from ai_agent import AIStatsAnalyzer
+from tanksTab import TanksTab
 import asyncio
 import concurrent.futures
+
 
 class StatsInterface:
     def __init__(self):
         self.parser = TankistStatsParser()
-        self.current_stats = None
 
     def fetch_player_stats(self, nickname: str) -> dict | None:
-        """Получает статистику игрока через парсер"""
         try:
-            result = self.parser.collect_player_stats(
-                nickname, 
-                min_battles_for_class_summary=20
-            )
-            return result["player_stats"]
+            result = self.parser.collect_player_stats(nickname)
+            return result
         except ParserError as e:
             raise Exception(str(e))
         except Exception as e:
             raise Exception(f"Ошибка при получении данных: {str(e)}")
 
-class_names = {
-        "SPG": "Арта",
-        "heavyTank": "Тяжелый танк",
-        "AT-SPG": "ПТ-САУ",
-        "mediumTank": "Средний танк",
-        "lightTank": "Легкий танк",
-    }
-nation_names = {
-        "ussr": "СССР",
-        "germany": "Германия",
-        "usa": "США",
-        "china": "Китай",
-        "france": "Франция",
-        "uk": "Великобритания",
-        "japan": "Япония",
-        "czech": "Чехия",
-        "poland": "Польша",
-        "sweden": "Швеция",
-        "italy": "Италия",
-    }
+
+import datetime
+import flet as ft
 
 def create_profile_tab(stats: dict) -> ft.Container:
-    """Вкладка с общим профилем игрока"""
-    profile = stats.get("profile", {})
-    meta = stats.get("meta", {})
-    calculated = profile.get("calculated", {})
-    insights = stats.get("insights", {})
-    
-    # Карточка 1: Основная информация
+    meta = stats.get("profile_meta", {})
+    prof = stats.get("profile_stat", {})
+    types_summ = stats.get("types_summ", {})
+    tanks_list = stats.get("tanks", [])
+
+    # --- Функция для получения названия танка по ID ---
+    def get_tank_name(id):
+        for tank in tanks_list:
+            tank_id = tank.get("tank_id")
+            if tank_id == id:
+                return tank.get("name")
+        return f"ID {id}" if id else "N/A"
+
+    # --- Преобразование временных меток ---
+    def format_timestamp(ts):
+        if ts and isinstance(ts, (int, float)):
+            return datetime.datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
+        return "N/A"
+
+    created_at = format_timestamp(meta.get("created_at"))
+    updated_at = format_timestamp(meta.get("updated_at"))
+    last_battle_time = format_timestamp(meta.get("last_battle_time"))
+
+    # --- Основные параметры ---
+    battles = prof.get("battles", 0)
+    wins = prof.get("wins", 0)
+    losses = prof.get("losses", 0)
+    draws = prof.get("draws", 0)
+    win_rate = round(prof.get("winrate", 0), 2) if battles else 0
+    survival_rate = prof.get("survival_rate", 0)  # уже есть в данных
+    survived_battles = prof.get("survived_battles", 0)
+
+    # --- Урон и фраги ---
+    avg_damage = round(prof.get("avg_damage", 0), 0)
+    total_damage = prof.get("damage_dealt", 0)
+    damage_received = prof.get("damage_received", 0)
+    avg_damage_blocked = prof.get("avg_damage_blocked", 0)
+    avg_damage_assisted = prof.get("avg_damage_assisted", 0)
+    avg_assist_track = prof.get("avg_damage_assisted_track", 0)
+    avg_assist_radio = prof.get("avg_damage_assisted_radio", 0)
+
+    avg_frags = round(prof.get("avg_frags", 0), 2)
+    total_frags = prof.get("frags", 0)
+
+    # --- Точность ---
+    shots = prof.get("shots", 0)
+    hits = prof.get("hits", 0)
+    hit_percent = prof.get("hits_percents", 0)
+    piercings = prof.get("piercings", 0)
+    piercings_received = prof.get("piercings_received", 0)
+    direct_hits_received = prof.get("direct_hits_received", 0)
+    no_damage_hits_received = prof.get("no_damage_direct_hits_received", 0)
+    explosion_hits = prof.get("explosion_hits", 0)
+    explosion_hits_received = prof.get("explosion_hits_received", 0)
+
+    # --- Опыт ---
+    avg_xp = round(prof.get("battle_avg_xp", 0), 0)
+    total_xp = prof.get("xp", 0)
+    max_xp = prof.get("max_xp", 0)
+    max_xp_tank = get_tank_name(prof.get("max_xp_tank_id", "N/A"))
+
+    # --- Максимальные достижения ---
+    max_damage = prof.get("max_damage", 0)
+    max_damage_tank = get_tank_name(prof.get("max_damage_tank_id", "N/A"))
+    max_frags = prof.get("max_frags", 0)
+    max_frags_tank = get_tank_name(prof.get("max_frags_tank_id", "N/A"))
+
+    # --- Разведка и капы ---
+    spotted = prof.get("spotted", 0)
+    avg_spotted = round(spotted / battles, 2) if battles else 0
+    capture_points = prof.get("capture_points", 0)
+    dropped_capture_points = prof.get("dropped_capture_points", 0)
+
+    # --- Стан и осколки ---
+    stun_number = prof.get("stun_number", 0)
+    stun_assisted_damage = prof.get("stun_assisted_damage", 0)
+    battles_on_stun_vehicles = prof.get("battles_on_stunning_vehicles", 0)
+
+    # --- Прочее ---
+    tanking_factor = prof.get("tanking_factor", 0)
+    wn8 = prof.get("wn8", 0)
+
+    # Определяем цвет WN8 (примерная градация)
+    if wn8 < 300:
+        wn8_color = ft.Colors.RED_900
+    elif wn8 < 600:
+        wn8_color = ft.Colors.RED_400
+    elif wn8 < 900:
+        wn8_color = ft.Colors.ORANGE_400
+    elif wn8 < 1300:
+        wn8_color = ft.Colors.YELLOW_700
+    elif wn8 < 1800:
+        wn8_color = ft.Colors.GREEN_400
+    else:
+        wn8_color = ft.Colors.BLUE_400
+
+    # --- Лучший класс по среднему WN8 из types_summ ---
+    best_class = "N/A"
+    best_wn8 = -1
+    if types_summ:
+        for class_name, class_stats in types_summ.items():
+            class_wn8 = class_stats.get("avg_wn8", 0)
+            if class_wn8 > best_wn8:
+                best_wn8 = class_wn8
+                best_class = class_name
+
+    # ========== КАРТОЧКА 1: Профиль и метаданные ==========
     card_profile = ft.Card(
         content=ft.Container(
             content=ft.Column([
-                ft.Text("Основная информация", size=16, weight=ft.FontWeight.BOLD),
-                ft.Divider(),
-                ft.Text(f"Никнейм: {meta.get('nickname', 'N/A')}", size=14),
-                ft.Text(f"Account ID: {meta.get('account_id', 'N/A')}", size=12),
+                ft.Text(f"Никнейм: {meta.get('nickname', 'N/A')}", size=16, weight=ft.FontWeight.BOLD),
+                ft.Text(f"ID аккаунта: {meta.get('account_id', 'N/A')}", size=14),
                 ft.Text(f"Глобальный рейтинг: {meta.get('global_rating', 'N/A')}", size=14),
-                ft.Text(f"Общий WN8: {profile.get('wn8', 'N/A')}", size=16, weight=ft.FontWeight.BOLD, color=ft.Colors.GREEN_400),
-                ft.Text(f"Дата сбора: {meta.get('collected_at_utc', 'N/A')[:19]}", size=11, color=ft.Colors.GREY_500),
-            ]),
+                ft.Text(f"Источник: {meta.get('source', 'N/A')}", size=12, color=ft.Colors.GREY_600),
+                ft.Divider(),
+                ft.Text("Временные метки:", size=12, weight=ft.FontWeight.BOLD),
+                ft.Text(f"Создан: {created_at}", size=11, color=ft.Colors.GREY_700),
+                ft.Text(f"Обновлён: {updated_at}", size=11, color=ft.Colors.GREY_700),
+                ft.Text(f"Последний бой: {last_battle_time}", size=11, color=ft.Colors.GREY_700),
+                ft.Text(f"Сбор данных: {meta.get('collected_at_utc', 'N/A')[:19]}", size=11, color=ft.Colors.GREY_500),
+            ], spacing=6),
             padding=15,
         ),
         expand=True,
     )
-    
-    # Карточка 2: Игровая статистика
-    card_stats = ft.Card(
+
+    # ========== КАРТОЧКА 2: Общая статистика боёв ==========
+    card_battles = ft.Card(
         content=ft.Container(
             content=ft.Column([
-                ft.Text("Игровая статистика", size=16, weight=ft.FontWeight.BOLD),
+                ft.Text("📊 Боевая статистика", size=16, weight=ft.FontWeight.BOLD),
                 ft.Divider(),
-                ft.Text(f"Всего боев: {calculated.get('battles', 0):,}", size=14),
-                ft.Text(f"Побед: {calculated.get('wins', 0):,} | Поражений: {calculated.get('losses', 0):,} | Ничьих: {calculated.get('draws', 0):,}", size=12),
-                ft.Text(f"Процент побед: {calculated.get('win_rate_percent', 0)}%", size=15, weight=ft.FontWeight.BOLD),
-                ft.Text(f"Средний урон: {calculated.get('avg_damage_per_battle', 0):,.0f}", size=14),
-                ft.Text(f"Средние фраги: {calculated.get('avg_frags_per_battle', 0):.2f}", size=14),
-                ft.Text(f"Средние разведданные: {calculated.get('avg_spots_per_battle', 0):.2f}", size=12),
-                ft.Text(f"Средний опыт: {calculated.get('avg_xp_per_battle', 0):.0f}", size=14),
-                ft.Text(f"Выживаемость: {calculated.get('survival_rate_percent', 0)}%", size=14),
-            ]),
+                ft.Text(f"Всего боёв: {battles:,}", size=14),
+                ft.Text(f"Побед: {wins:,} | Поражений: {losses:,} | Ничьих: {draws:,}", size=12),
+                ft.Text(f"Процент побед: {win_rate}%", size=15, weight=ft.FontWeight.BOLD, color=ft.Colors.GREEN_400 if win_rate >= 50 else ft.Colors.RED_400),
+                ft.Row([ft.Text("Выживаемость:", size=13), ft.Text(f"{survival_rate}% ({survived_battles:,} боев)", size=13)]),
+                ft.Row([ft.Text("Фактор танкования:", size=13), ft.Text(f"{tanking_factor:.2f}", size=13)]),
+                ft.Text(f"Очки захвата: {capture_points:,} | Сбито очков: {dropped_capture_points:,}", size=12)
+            ], spacing=8),
             padding=15,
         ),
         expand=True,
     )
-    
-    # Карточка 3: Аналитика
-    card_analytics = ft.Card(
+
+    # ========== КАРТОЧКА 3: Урон и фраги ==========
+    card_damage = ft.Card(
         content=ft.Container(
             content=ft.Column([
-                ft.Text("Аналитика", size=16, weight=ft.FontWeight.BOLD),
+                ft.Text("💥 Урон и фраги", size=16, weight=ft.FontWeight.BOLD),
                 ft.Divider(),
-                ft.Text(f"Лучший класс: {insights.get('best_vehicle_class', 'N/A')}", size=14),
-                ft.Text(f"Порог боев для учета: {insights.get('min_battles_for_class_summary', 20)}", size=12),
-            ]),
+                ft.Text(f"Средний урон: {avg_damage:,.0f}", size=14),
+                ft.Text(f"Всего нанесено: {total_damage:,}", size=12),
+                ft.Text(f"Получено урона: {damage_received:,}", size=12),
+                ft.Text(f"Ср. заблокировано: {avg_damage_blocked:.0f}", size=12),
+                ft.Text(f"Ср. ассистированный урон: {avg_damage_assisted:.0f}", size=12),
+                ft.Text(f"  - по гуслям: {avg_assist_track:.0f}", size=11, color=ft.Colors.GREY_700),
+                ft.Text(f"  - по разведке: {avg_assist_radio:.0f}", size=11, color=ft.Colors.GREY_700),
+                ft.Text(f"Средние фраги: {avg_frags:.2f} (всего {total_frags:,})", size=14),
+            ], spacing=7),
             padding=15,
         ),
         expand=True,
     )
-    
+
+    # ========== КАРТОЧКА 4: Точность и попадания ==========
+    card_accuracy = ft.Card(
+        content=ft.Container(
+            content=ft.Column([
+                ft.Text("🎯 Точность", size=16, weight=ft.FontWeight.BOLD),
+                ft.Divider(),
+                ft.Text(f"Процент попаданий: {hit_percent}%", size=14),
+                ft.Text(f"Выстрелов: {shots:,} | Попаданий: {hits:,}", size=12),
+                ft.Text(f"Пробитий: {piercings:,}", size=12),
+                ft.Text(f"Пробитий по вам: {piercings_received:,}", size=12),
+                ft.Text(f"Прямых попаданий получено: {direct_hits_received:,}", size=12),
+                ft.Text(f"Из них без урона: {no_damage_hits_received:,}", size=12),
+                ft.Text(f"Фугасных попаданий (своих): {explosion_hits:,}", size=12),
+                ft.Text(f"Фугасных попаданий по вам: {explosion_hits_received:,}", size=12),
+            ], spacing=7),
+            padding=15,
+        ),
+        expand=True,
+    )
+
+    # ========== КАРТОЧКА 5: Опыт и максимумы ==========
+    card_maxima = ft.Card(
+        content=ft.Container(
+            content=ft.Column([
+                ft.Text("🏆 Достижения", size=16, weight=ft.FontWeight.BOLD),
+                ft.Divider(),
+                ft.Text(f"Средний опыт: {avg_xp:.0f} (всего {total_xp:,})", size=13),
+                ft.Text(f"Макс. опыт: {max_xp} ({max_xp_tank})", size=12),
+                ft.Text(f"Макс. урон: {max_damage:,} ({max_damage_tank})", size=12),
+                ft.Text(f"Макс. фрагов: {max_frags} ({max_frags_tank})", size=12),
+                ft.Text(f"Лучший класс: {best_class}" if best_class != "N/A" else "Лучший класс: не определён", size=12)
+            ], spacing=8),
+            padding=15,
+        ),
+        expand=True,
+    )
+
+    # ========== КАРТОЧКА 6: Разведка, стан и WN8 ==========
+    card_vision = ft.Card(
+        content=ft.Container(
+            content=ft.Column([
+                ft.Text("👁️ Разведка и стан", size=16, weight=ft.FontWeight.BOLD),
+                ft.Divider(),
+                ft.Text(f"Средняя разведка: {avg_spotted:.2f} (всего {spotted:,})", size=13),
+                ft.Text(f"Стан: {stun_number} раз | Урон от стана: {stun_assisted_damage:,}", size=12),
+                ft.Text(f"Бои на технике со станом: {battles_on_stun_vehicles}", size=12),
+                ft.Divider(),
+                ft.Text(f"Рейтинг WN8:", size=14, weight=ft.FontWeight.BOLD),
+                ft.Text(f"{wn8}", size=20, weight=ft.FontWeight.BOLD, color=wn8_color),
+            ], spacing=8),
+            padding=15,
+        ),
+        expand=True,
+    )
+
+    # Собираем всё в адаптивную сетку
     return ft.Container(
         content=ft.Column(
             [
                 ft.ResponsiveRow(
                     [
-                        ft.Container(
-                            content=card_profile,
-                            col={"sm": 12, "md": 6, "lg": 4},
-                        ),
-                        ft.Container(
-                            content=card_stats,
-                            col={"sm": 12, "md": 6, "lg": 4},
-                        ),
-                        ft.Container(
-                            content=card_analytics,
-                            col={"sm": 12, "md": 12, "lg": 4},
-                        ),
+                        ft.Container(content=card_profile, col={"sm": 12, "md": 6, "lg": 4}),
+                        ft.Container(content=card_battles, col={"sm": 12, "md": 6, "lg": 4}),
+                        ft.Container(content=card_damage, col={"sm": 12, "md": 6, "lg": 4}),
+                        ft.Container(content=card_accuracy, col={"sm": 12, "md": 6, "lg": 4}),
+                        ft.Container(content=card_maxima, col={"sm": 12, "md": 6, "lg": 4}),
+                        ft.Container(content=card_vision, col={"sm": 12, "md": 6, "lg": 4}),
                     ],
-                    spacing=10,
+                    spacing=15,
+                    run_spacing=15,
                 ),
             ],
             spacing=15,
@@ -131,132 +267,51 @@ def create_profile_tab(stats: dict) -> ft.Container:
         expand=True,
     )
 
-def create_tanks_tab(stats: dict) -> ft.Container:
-    """Вкладка со списком танков"""
-    tanks = stats.get("tank_stats", [])
-    
-    rows = []
-    for tank in tanks[:50]:
-        rows.append(
-            ft.DataRow(
-                cells=[
-                    ft.DataCell(ft.Text(tank.get("name", "N/A")[:30])),
-                    ft.DataCell(ft.Text(tank.get("type", "N/A"))),
-                    ft.DataCell(ft.Text(str(tank.get("tier", "N/A")))),
-                    ft.DataCell(ft.Text(f"{tank.get('battles', 0):,}")),
-                    ft.DataCell(ft.Text(f"{tank.get('win_rate', 0)}%")),
-                    ft.DataCell(ft.Text(f"{tank.get('avg_damage', 0):,.0f}")),
-                    ft.DataCell(ft.Text(f"{tank.get('avg_frags', 0):.2f}")),
-                    ft.DataCell(ft.Text(f"{tank.get('wn8', 0):.0f}")),
-                ]
-            )
-        )
-    
-    data_table = ft.DataTable(
-        columns=[
-            ft.DataColumn(ft.Text("Название", weight=ft.FontWeight.BOLD)),
-            ft.DataColumn(ft.Text("Тип", weight=ft.FontWeight.BOLD)),
-            ft.DataColumn(ft.Text("Уровень", weight=ft.FontWeight.BOLD)),
-            ft.DataColumn(ft.Text("Бои", weight=ft.FontWeight.BOLD)),
-            ft.DataColumn(ft.Text("Винрейт", weight=ft.FontWeight.BOLD)),
-            ft.DataColumn(ft.Text("Урон", weight=ft.FontWeight.BOLD)),
-            ft.DataColumn(ft.Text("Фраги", weight=ft.FontWeight.BOLD)),
-            ft.DataColumn(ft.Text("WN8", weight=ft.FontWeight.BOLD)),
-        ],
-        rows=rows,
-        heading_row_color=ft.Colors.BLUE_GREY_900,
-        heading_text_style=ft.TextStyle(color=ft.Colors.WHITE),
-        column_spacing=20,
-        expand=True,
-    )
-    
-    return ft.Container(
-        content=ft.Column(
-            [
-                ft.Text(f"Всего танков: {len(tanks)}", size=16, weight=ft.FontWeight.BOLD),
-                ft.Text("Показаны первые 50 танков по количеству боев", size=12, color=ft.Colors.GREY_500),
-                ft.ListView(
-                    controls=[data_table],
-                    expand=True,
-                ),
-            ],
-            spacing=10,
-            expand=True,
-        ),
-        padding=20,
-        expand=True,
-    )
+def create_tanks_tab(stats: dict) -> ft.Column:
+    return TanksTab(stats)
+
 
 def create_group_summaries_tab(stats: dict) -> ft.Container:
-    """Вкладка с групповыми сводками"""
-    groups = stats.get("group_summaries", {})
-
-    # Маппинг для перевода значений
-    def translate_type(value):
-        return class_names.get(value, value)
+    """Вкладка с групповыми сводками (по типам, нациям, уровням)"""
+    # Данные уже имеют нужный формат: словарь {ключ: {battles, win_rate, avg_damage, ...}}
+    types_raw = stats.get("types_summ", {})
+    nations_raw = stats.get("nations_summ", {})
+    tiers_raw = stats.get("tiers_summ", {})
     
-    def translate_nation(value):
-        return nation_names.get(value, value)
+    def dict_to_list(data: dict) -> list:
+        """Преобразует словарь {key: stats} в список [{"key": key, ...}]"""
+        result = []
+        for key, values in data.items():
+            entry = {
+                "key": key,
+                "battles": values.get("battles", 0),
+                "win_rate": values.get("win_rate", 0),
+                "avg_damage": values.get("avg_damage", 0),
+                "avg_frags": values.get("avg_frags", 0),
+                "avg_wn8": values.get("avg_wn8", 0),
+            }
+            result.append(entry)
+        return result
     
-    def translate_tier(value):
-        return str(value)
+    types_list = dict_to_list(types_raw)
+    nations_list = dict_to_list(nations_raw)
+    tiers_list = dict_to_list(tiers_raw)
     
-    # Создаем контейнеры для каждой вкладки с обработкой названий
-    type_content = ft.Container(
-        content=ft.ListView(
-            controls=[_create_group_table(
-                groups.get("by_type", []),
-                name_translator=translate_type
-            )],
-            expand=True,
-        ),
-        padding=10,
-        expand=True,
-    )
+    # Таблицы
+    type_table = _create_group_table(types_list)
+    nation_table = _create_group_table(nations_list)
+    tier_table = _create_group_table(tiers_list)
     
-    nation_content = ft.Container(
-        content=ft.ListView(
-            controls=[_create_group_table(
-                groups.get("by_nation", []),
-                name_translator=translate_nation
-            )],
-            expand=True,
-        ),
-        padding=10,
-        expand=True,
-    )
-    
-    tier_content = ft.Container(
-        content=ft.ListView(
-            controls=[_create_group_table(
-                groups.get("by_tier", []),
-                name_translator=translate_tier
-            )],
-            expand=True,
-        ),
-        padding=10,
-        expand=True,
-    )
+    type_content = ft.Container(content=ft.ListView(controls=[type_table]), padding=10, expand=True)
+    nation_content = ft.Container(content=ft.ListView(controls=[nation_table]), padding=10, expand=True)
+    tier_content = ft.Container(content=ft.ListView(controls=[tier_table]), padding=10, expand=True)
     
     inner_tabs = ft.Tabs(
         content=ft.Column(
             expand=True,
             controls=[
-                ft.TabBar(
-                    tabs=[
-                        ft.Tab("По типам"),
-                        ft.Tab("По нациям"),
-                        ft.Tab("По уровням"),
-                    ],
-                ),
-                ft.TabBarView(
-                    expand=True,
-                    controls=[
-                        type_content,
-                        nation_content,
-                        tier_content,
-                    ],
-                ),
+                ft.TabBar(tabs=[ft.Tab("По типам"), ft.Tab("По нациям"), ft.Tab("По уровням")]),
+                ft.TabBarView(expand=True, controls=[type_content, nation_content, tier_content]),
             ],
         ),
         length=3,
@@ -267,20 +322,14 @@ def create_group_summaries_tab(stats: dict) -> ft.Container:
     return ft.Container(content=inner_tabs, padding=20, expand=True)
 
 
-def _create_group_table(group_data: list, name_translator=None) -> ft.DataTable:
-    """Создание таблицы для групповых сводок с опциональным переводом названий"""
-    if name_translator is None:
-        name_translator = lambda x: x
-    
+def _create_group_table(group_data: list) -> ft.DataTable:
+    """Создание таблицы для групповых сводок (список словарей с ключами key, battles, win_rate, ...)"""
     rows = []
     for group in group_data:
-        # Переводим название группы, если есть переводчик
-        group_name = name_translator(group.get("key", "N/A"))
-        
         rows.append(
             ft.DataRow(
                 cells=[
-                    ft.DataCell(ft.Text(str(group_name)[:30])),
+                    ft.DataCell(ft.Text(str(group.get("key", "N/A"))[:30])),
                     ft.DataCell(ft.Text(f"{group.get('battles', 0):,}")),
                     ft.DataCell(ft.Text(f"{group.get('win_rate', 0)}%")),
                     ft.DataCell(ft.Text(f"{group.get('avg_damage', 0):,.0f}")),
@@ -304,10 +353,28 @@ def _create_group_table(group_data: list, name_translator=None) -> ft.DataTable:
         heading_text_style=ft.TextStyle(color=ft.Colors.WHITE),
     )
 
+
 def create_top_tanks_tab(stats: dict) -> ft.Container:
-    """Вкладка с топами танков"""
-    tops = stats.get("top_tanks", {})
-    criteria = tops.get("criteria", {})
+    """Вкладка с топами танков (по WN8, винрейту, урону, фрагам, боям)"""
+    tanks = stats.get("tanks", [])
+    min_battles = 20  # минимальное число боев для попадания в топы
+    
+    # Фильтруем танки с достаточным числом боев
+    filtered_tanks = [t for t in tanks if t.get("battles", 0) >= min_battles]
+    
+    # Сортируем и берем топ-10 по каждому критерию
+    top_by_wn8 = sorted(filtered_tanks, key=lambda x: x.get("wn8", 0), reverse=True)[:10]
+    top_by_winrate = sorted(filtered_tanks, key=lambda x: x.get("winrate", 0), reverse=True)[:10]
+    top_by_avg_damage = sorted(filtered_tanks, key=lambda x: x.get("avg_damage", 0), reverse=True)[:10]
+    top_by_avg_frags = sorted(filtered_tanks, key=lambda x: x.get("avg_frags", 0), reverse=True)[:10]
+    top_by_battles = sorted(filtered_tanks, key=lambda x: x.get("battles", 0), reverse=True)[:10]
+    
+    # Таблицы
+    table_wn8 = _create_top_table(top_by_wn8)
+    table_winrate = _create_top_table(top_by_winrate)
+    table_damage = _create_top_table(top_by_avg_damage)
+    table_frags = _create_top_table(top_by_avg_frags)
+    table_battles = _create_top_table(top_by_battles)
     
     inner_tabs = ft.Tabs(
         length=5,
@@ -316,58 +383,15 @@ def create_top_tanks_tab(stats: dict) -> ft.Container:
         content=ft.Column(
             expand=True,
             controls=[
-                ft.TabBar(
-                    tabs=[
-                        ft.Tab(label="По WN8"),
-                        ft.Tab(label="По винрейту"),
-                        ft.Tab(label="По урону"),
-                        ft.Tab(label="По фрагам"),
-                        ft.Tab(label="По боям"),
-                    ],
-                ),
+                ft.TabBar(tabs=[ft.Tab("По WN8"), ft.Tab("По винрейту"), ft.Tab("По урону"), ft.Tab("По фрагам"), ft.Tab("По боям")]),
                 ft.TabBarView(
                     expand=True,
                     controls=[
-                        ft.Container(
-                            content=ft.ListView(
-                                controls=[_create_top_table(tops.get("by_wn8", []))],
-                                expand=True,
-                            ),
-                            padding=10,
-                            expand=True,
-                        ),
-                        ft.Container(
-                            content=ft.ListView(
-                                controls=[_create_top_table(tops.get("by_win_rate", []))],
-                                expand=True,
-                            ),
-                            padding=10,
-                            expand=True,
-                        ),
-                        ft.Container(
-                            content=ft.ListView(
-                                controls=[_create_top_table(tops.get("by_avg_damage", []))],
-                                expand=True,
-                            ),
-                            padding=10,
-                            expand=True,
-                        ),
-                        ft.Container(
-                            content=ft.ListView(
-                                controls=[_create_top_table(tops.get("by_avg_frags", []))],
-                                expand=True,
-                            ),
-                            padding=10,
-                            expand=True,
-                        ),
-                        ft.Container(
-                            content=ft.ListView(
-                                controls=[_create_top_table(tops.get("by_battles", []))],
-                                expand=True,
-                            ),
-                            padding=10,
-                            expand=True,
-                        ),
+                        ft.Container(content=ft.ListView(controls=[table_wn8]), padding=10, expand=True),
+                        ft.Container(content=ft.ListView(controls=[table_winrate]), padding=10, expand=True),
+                        ft.Container(content=ft.ListView(controls=[table_damage]), padding=10, expand=True),
+                        ft.Container(content=ft.ListView(controls=[table_frags]), padding=10, expand=True),
+                        ft.Container(content=ft.ListView(controls=[table_battles]), padding=10, expand=True),
                     ],
                 ),
             ],
@@ -376,25 +400,25 @@ def create_top_tanks_tab(stats: dict) -> ft.Container:
     
     return ft.Container(
         content=ft.Column([
-            ft.Text(f"Топы формируются из танков с минимум {criteria.get('min_battles', 20)} боями", 
-                   size=12, color=ft.Colors.GREY_500),
+            ft.Text(f"Топы формируются из танков с минимум {min_battles} боями", size=12, color=ft.Colors.GREY_500),
             inner_tabs,
         ]),
         padding=20,
         expand=True,
     )
 
+
 def _create_top_table(tanks: list) -> ft.DataTable:
-    """Создает таблицу для топов"""
+    """Создает таблицу для топов (список танков)"""
     rows = []
-    for i, tank in enumerate(tanks[:10], 1):
+    for i, tank in enumerate(tanks, 1):
         rows.append(
             ft.DataRow(
                 cells=[
                     ft.DataCell(ft.Text(str(i), weight=ft.FontWeight.BOLD)),
                     ft.DataCell(ft.Text(tank.get("name", "N/A")[:25])),
                     ft.DataCell(ft.Text(str(tank.get("battles", 0)))),
-                    ft.DataCell(ft.Text(f"{tank.get('win_rate', 0)}%")),
+                    ft.DataCell(ft.Text(f"{tank.get('winrate', 0)}%")),
                     ft.DataCell(ft.Text(f"{tank.get('avg_damage', 0):,.0f}")),
                     ft.DataCell(ft.Text(f"{tank.get('wn8', 0):.0f}")),
                 ]
@@ -415,6 +439,7 @@ def _create_top_table(tanks: list) -> ft.DataTable:
         heading_text_style=ft.TextStyle(color=ft.Colors.WHITE),
     )
 
+
 async def update_ai_analysis_async(page: ft.Page, ai_input: ft.TextField, ai_analyst, stats: dict):
     """Асинхронно обновляет поле с анализом ИИ (не блокирует UI)"""
     if not stats:
@@ -431,7 +456,6 @@ async def update_ai_analysis_async(page: ft.Page, ai_input: ft.TextField, ai_ana
     page.update()
     
     try:
-        # Запускаем синхронный метод analyze в отдельном потоке через run_in_executor
         loop = asyncio.get_running_loop()
         with concurrent.futures.ThreadPoolExecutor() as pool:
             result = await loop.run_in_executor(pool, ai_analyst.analyze, stats)
@@ -440,6 +464,7 @@ async def update_ai_analysis_async(page: ft.Page, ai_input: ft.TextField, ai_ana
         ai_input.value = f"❌ Ошибка анализа: {str(e)}"
     finally:
         page.update()
+
 
 def main(page: ft.Page):
     page.title = "Анализатор игровой статистики World of Tanks"
@@ -450,7 +475,7 @@ def main(page: ft.Page):
     
     interface = StatsInterface()
     
-    # Создаём ИИ-аналитика
+    # Создаём ИИ-аналитика (если доступен)
     try:
         ai_analyst = AIStatsAnalyzer(model_name="qwen2.5:7b-instruct")
         print("✅ ИИ-аналитик готов")
@@ -467,14 +492,10 @@ def main(page: ft.Page):
         text_size=16,
     )
     
-    search_button = ft.ElevatedButton(
-        "Получить статистику",
-        width=200,
-    )
-    
+    search_button = ft.ElevatedButton("Получить статистику", width=200)
     error_text = ft.Text("", color=ft.Colors.RED_400, size=14, visible=False)
     loading_indicator = ft.ProgressRing(width=30, height=30, visible=False)
-
+    
     main_tabs = ft.Tabs(
         length=4,
         selected_index=0,
@@ -484,12 +505,7 @@ def main(page: ft.Page):
             controls=[
                 ft.TabBar(
                     tab_alignment=ft.TabAlignment.CENTER,
-                    tabs=[
-                        ft.Tab(label="Профиль"),
-                        ft.Tab(label="Танки"),
-                        ft.Tab(label="Сводки"),
-                        ft.Tab(label="Топы"),
-                    ],
+                    tabs=[ft.Tab(label="Профиль"), ft.Tab(label="Танки"), ft.Tab(label="Сводки"), ft.Tab(label="Топы")],
                 ),
                 ft.TabBarView(
                     expand=True,
@@ -512,17 +528,13 @@ def main(page: ft.Page):
         min_lines=5,
         max_lines=15,
         read_only=True,
-        expand=True,  # Растягиваем по ширине
+        expand=True,
     )
-
+    
     ai_section = ft.Column(
-        [
-            ft.Divider(height=20),
-            ft.Text("🤖 Анализ от ИИ-агента", size=18, weight=ft.FontWeight.BOLD),
-            ai_input,
-        ],
+        [ft.Divider(height=20), ft.Text("🤖 Анализ от ИИ-агента", size=18, weight=ft.FontWeight.BOLD), ai_input],
         visible=False,
-        expand=True,  # Чтобы Column тоже растягивался
+        expand=True,
     )
     
     status_text = ft.Text("", size=12, color=ft.Colors.GREY_400, visible=False)
@@ -539,20 +551,19 @@ def main(page: ft.Page):
             main_tabs.visible = True
             ai_section.visible = True
             
-            collected_at = stats.get("meta", {}).get("collected_at_utc", "неизвестно")
+            collected_at = stats.get("profile_meta", {}).get("collected_at_utc", "неизвестно")
             status_text.value = f"📊 Данные загружены | Обновлено: {collected_at[:19]}"
             status_text.visible = True
             
             page.update()
             
-            # Запускаем асинхронный ИИ-анализ (не блокирует UI!)
+            # Запускаем асинхронный ИИ-анализ
             asyncio.create_task(update_ai_analysis_async(page, ai_input, ai_analyst, stats))
             
         except Exception as e:
             print(f"Ошибка обновления UI: {e}")
     
     def on_search_click(e):
-        """Обработчик поиска статистики"""
         nickname = nickname_field.value.strip()
         
         if not nickname:
@@ -568,24 +579,19 @@ def main(page: ft.Page):
         
         try:
             stats = interface.fetch_player_stats(nickname)
-            
             if stats:
-                interface.current_stats = stats
                 update_ui_with_stats(stats)
-                
                 page.snack_bar = ft.SnackBar(
                     content=ft.Text(f"✅ Статистика для {nickname} успешно загружена!"),
                     bgcolor=ft.Colors.GREEN_700,
                 )
                 page.snack_bar.open = True
-                
         except Exception as e:
             error_text.value = f"❌ Ошибка: {str(e)}"
             error_text.visible = True
             main_tabs.visible = False
             ai_section.visible = False
             status_text.visible = False
-        
         finally:
             search_button.disabled = False
             loading_indicator.visible = False
@@ -594,35 +600,15 @@ def main(page: ft.Page):
     search_button.on_click = on_search_click
     nickname_field.on_submit = on_search_click
     
-    # Сборка интерфейса
     page.add(
         ft.SafeArea(
             expand=True,
             content=ft.Column(
                 [
-                    # Верхняя строка поиска - фиксированная
-                    ft.Row(
-                        [nickname_field, search_button, loading_indicator],
-                        alignment=ft.MainAxisAlignment.CENTER,
-                        spacing=20,
-                    ),
-                    
-                    # Ошибки - фиксированная
+                    ft.Row([nickname_field, search_button, loading_indicator], alignment=ft.MainAxisAlignment.CENTER, spacing=20),
                     error_text,
-                    
-                    # Основные вкладки - занимают всё доступное пространство
-                    ft.Container(
-                        content=main_tabs,
-                        expand=True,
-                    ),
-                    
-                    # AI секция - фиксированная высота
-                    ft.Container(
-                        content=ai_section,
-                        height=200,
-                    ),
-                    
-                    # Статус бар - фиксированный
+                    ft.Container(content=main_tabs, expand=True),
+                    ft.Container(content=ai_section, height=200),
                     ft.Row([status_text], alignment=ft.MainAxisAlignment.CENTER),
                 ],
                 spacing=10,
@@ -632,10 +618,6 @@ def main(page: ft.Page):
         )
     )
 
+
 if __name__ == "__main__":
-    ft.app(
-        target=main,
-        host="192.168.0.105", 
-        port=8501, 
-        view=ft.AppView.WEB_BROWSER
-    )
+    ft.app(target=main)
