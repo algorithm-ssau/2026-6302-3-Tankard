@@ -1,5 +1,8 @@
 import flet as ft
 
+def create_tanks_tab(stats: dict) -> ft.Column:
+    return TanksTab(stats)
+
 class TanksTab(ft.Column):
     """Вкладка со списком танков с поддержкой сортировки по любому столбцу"""
 
@@ -190,3 +193,4 @@ class TanksTab(ft.Column):
         vertical_scroll_col.controls[0] = new_table
         self.data_table = new_table
         self.update()
+

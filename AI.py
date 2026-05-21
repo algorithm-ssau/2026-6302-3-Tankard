@@ -1,7 +1,7 @@
 from groq import Groq
 from typing import Any
 
-def build_prompt(data: dict[str, Any]) -> str:
+def analyze_stats(stats: dict[str, Any]) -> str:
     pass
 
 def ask_ai(prompt: str) -> str:
