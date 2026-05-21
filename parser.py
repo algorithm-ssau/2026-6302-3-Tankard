@@ -221,7 +221,7 @@ class TankistStatsParser:
         result = {}
         
         for display_name in TYPES.values():
-            type_tanks = [t for t in tanks if t.type == display_name]
+            type_tanks = [t for t in tanks if t.type == display_name and t.battles >= 10]
             
             by_battles = sorted(type_tanks, key=lambda x: x.battles, reverse=True)[:5]
             by_wn8     = sorted(type_tanks, key=lambda x: x.wn8, reverse=True)[:5]

@@ -3,38 +3,11 @@ import asyncio
 import concurrent.futures
 
 from parser import TankistStatsParser, ParserError
-from AI     import analyze_stats
+from AI     import AI
 from interface.tanks_tab      import create_tanks_tab
 from interface.profile_tab    import create_profile_tab
 from interface.group_summ_tab import create_group_summaries_tab
 from interface.tops_tab       import create_top_tanks_tab
-
-class StatsInterface:
-    def __init__(self):
-        self.parser = TankistStatsParser()
-
-    def fetch_player_stats(self, nickname: str) -> dict | None:
-        try:
-            result = self.parser.collect_player_stats(nickname)
-            return result
-        except ParserError as e:
-            raise Exception(str(e))
-        except Exception as e:
-            raise Exception(f"Ошибка при получении данных: {str(e)}")
-
-async def ai_analysis(page: ft.Page, ai_input: ft.TextField, stats: dict):
-    ai_input.value = "🤔 Анализирую статистику... (20-60 секунд)"
-    page.update()
-    
-    try:
-        loop = asyncio.get_running_loop()
-        with concurrent.futures.ThreadPoolExecutor() as pool:
-            result = await loop.run_in_executor(pool, analyze_stats, stats)
-        ai_input.value = result
-    except Exception as e:
-        ai_input.value = f"❌ Ошибка анализа: {str(e)}"
-    finally:
-        page.update()
 
 
 def main(page: ft.Page):
@@ -42,11 +15,11 @@ def main(page: ft.Page):
     page.theme_mode = ft.ThemeMode.DARK
     page.padding = 20
     
-    interface = StatsInterface()
+    parser = TankistStatsParser()
+    ai = AI()
     
     # Элементы интерфейса
     nickname_field = ft.TextField(label="Введите никнейм игрока", width=400, autofocus=True, text_size=16,)
-    
     search_button = ft.ElevatedButton("Получить статистику", width=200)
     error_text = ft.Text("", color=ft.Colors.RED_400, size=14, visible=False)
     
@@ -64,6 +37,21 @@ def main(page: ft.Page):
     ai_input   = ft.TextField(label="Анализ от ИИ", multiline=True, min_lines=5, max_lines=15, read_only=True, expand=True)
     ai_section = ft.Column([ft.Divider(height=20), ai_input],visible=False,expand=True,)
     
+    async def AI_analyse(stats: dict):
+        ai_input.value = "🤔 Анализируем статистику"
+        page.update()
+        
+        try:
+            loop = asyncio.get_running_loop()
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                ai_input.value = await loop.run_in_executor(pool, ai.analyze_stats, stats)
+        except Exception as e: ai_input.value = f"Ошибка анализа: {str(e)}"
+        finally: page.update()
+
+    def fetch_player_stats(nickname: str) -> dict | None:
+        try:  return parser.collect_player_stats(nickname)
+        except ParserError as e:  raise Exception(str(e))
+        except Exception as e:    raise Exception(f"Ошибка при получении данных: {str(e)}")
 
     def update_ui(stats: dict):
         try:
@@ -76,7 +64,7 @@ def main(page: ft.Page):
             main_tabs.visible = True
             ai_section.visible = True
             page.update()
-            asyncio.create_task(ai_analysis(page, ai_input, stats))
+            asyncio.create_task(AI_analyse(stats))
             
         except Exception as e: print(f"Ошибка обновления UI: {e}")
     
@@ -90,7 +78,7 @@ def main(page: ft.Page):
             return
         
         try:
-            stats = interface.fetch_player_stats(nickname)
+            stats = fetch_player_stats(nickname)
             update_ui(stats)
         except Exception as e:
             error_text.value = f"Ошибка: {str(e)}"
@@ -106,6 +94,4 @@ def main(page: ft.Page):
                     ft.Container(content=main_tabs, expand=True),
                     ft.Container(content=ai_section, height=200)])))
 
-
-if __name__ == "__main__":
-    ft.app(target=main)
+ft.app(target=main)
