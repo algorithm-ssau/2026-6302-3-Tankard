@@ -92,6 +92,10 @@ def main(page: ft.Page):
         spacing=10, horizontal_alignment=ft.CrossAxisAlignment.CENTER,expand=True, controls=[
                     ft.Row([nickname_field, search_button], alignment=ft.MainAxisAlignment.CENTER, spacing=20), error_text,
                     ft.Container(content=main_tabs, expand=True),
-                    ft.Container(content=ai_section, height=200)])))
+                    ft.Container(content=ai_section, height=300)])))
 
-ft.app(target=main)
+ft.app(
+    target=main,
+    host="192.168.0.105", 
+    port=8501, 
+    view=ft.AppView.WEB_BROWSER)
