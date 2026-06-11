@@ -34,7 +34,8 @@ def main(page: ft.Page):
                     ])]))
     
     # Поле для ИИ-агента
-    ai_input   = ft.TextField(label="Анализ от ИИ", multiline=True, min_lines=5, max_lines=15, read_only=True, expand=True)
+    ai_input   = ft.TextField(label="Анализ от ИИ", multiline=True, min_lines=5, max_lines=15, read_only=True, expand=True,
+                              text_style=ft.TextStyle(height=1.3))
     ai_section = ft.Column([ft.Divider(height=20), ai_input],visible=False,expand=True,)
     
     async def AI_analyse(stats: dict):
